@@ -1,0 +1,29 @@
+{
+  "name": "rvemu-baremetal.js",
+  "version": "1.0.0",
+  "description": "Javascript RISCV emulator",
+  "main": "./dist/main.js",
+  "types": "./dist/main.d.ts",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/William-An/rvemu-baremetal.js.git"
+  },
+  "keywords": [
+    "riscv"
+  ],
+  "author": "William-An",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/William-An/rvemu-baremetal.js/issues"
+  },
+  "homepage": "https://github.com/William-An/rvemu-baremetal.js#readme",
+  "devDependencies": {
+    "typescript": "^5.2.2"
+  }
+}
