@@ -2,69 +2,150 @@
  * Memory system for the RISCV emulator
  */
 
-import { hexify } from "./utils"
-
-class Memory {
-    // TODO What data structure to use?
-    // TODO Also need to support MMIO
-}
+import { hexify, BigintPair } from "./utils"
 
 type Endianness = "big" | "little";
-type Pair<T1, T2> = [T1, T2];
-type StringPair = Pair<string, string>;
-type BigintPair = Pair<bigint, bigint>;
 
 /**
- * TODO Can have normal memory region and MMIO mem region?
- * TODO Permission flags? Probably don't want to touch as we are on baremetal
+ * Base memory exception class
  */
-abstract class BaseMemoryRegion {
-    // Region start address
-    regionStart: bigint;
-    // Region size
-    regionSize: bigint;
-    // Whether can resize this region
-    resizable: boolean;
-    // Whether can relocate the memory region with a different start address
-    relocatable: boolean;
-    // Whether can be merged with another region
-    mergeable: boolean;
+class BaseMemoryError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "BaseMemoryError";
+    }
+}
 
-    constructor(_start: bigint, _size: bigint, _resizable: boolean, 
-                _relocatable: boolean, _mergeable: boolean) {
-        if (_start < 0 || _size <= 0) {
-            throw new BaseMemoryError(`Invalid memory region start address (${_start}) or size (${_size})!`);
-        }
-        this.regionStart = _start;
-        this.regionSize = _size;
-        this.resizable = _resizable;
-        this.relocatable = _relocatable;
-        this.mergeable = _mergeable;
+class MemoryError extends BaseMemoryError {
+    constructor(message: string) {
+        super(message);
+        this.name = "MemoryError";
+    }
+}
+
+class MemoryRegionError extends BaseMemoryError {
+    constructor(message: string) {
+        super(message);
+        this.name = "MemoryRegionError";
+    }
+}
+
+class Memory {
+    // BaseMemoryRegion list sorted by address in incremental way
+    memoryRegions: Array<BaseMemoryRegion>;
+    // Default memory region to allocate on a write to location
+    // not in the list
+    defaultMemRegionSize: bigint = BigInt(2048);
+    // Memory start address
+    memoryStart: bigint;
+    // Maximum memory size in bytes
+    memorySize: bigint;
+
+    constructor(_memStart: bigint, _memSize: bigint, _defaultSize: bigint) {
+        this.memoryRegions = Array<BaseMemoryRegion>(0);
+        this.memoryStart = _memStart;
+        this.memorySize = _memSize;
+        this.defaultMemRegionSize = _defaultSize;
     }
 
     /**
-     * Read data from the memory region without any sign extension.
-     * @param address Address of the data
-     * @param size data size
-     * @returns A uint8 array with arr[0] at address
-     *          arr[1] at address + 1, etc. 
-     *          
-     *          Memory is endianness agnostic. Core should
-     *          Prepare the data according to its endianness.
+     * Add a memory region to the region list, throw error.
+     *      If the incoming region collides with existing regions in the list,
+     *      since the incoming region and existing regions might have contents
+     *      on overlapping addresses.
+     * If no collision and no merging opportunity, we insert the incoming region
+     *      at sorted position according to its start address 
+     * @param region Incoming region to be added
+     * @returns 
      */
-    abstract read(address: bigint, size: number): Uint8Array;
+    addMemoryRegion(region: BaseMemoryRegion): void {
+        // Check if the region is within bound of memory start and size
+        if (!this.isRegionValid(region)) {
+            // If invalid region
+            let regionEnd = region.regionStart + region.regionSize - BigInt(1);
+            throw new MemoryError(`Invalid memory region [${hexify(region.regionStart)}, ${hexify(regionEnd)}] `
+                + `for memory [${hexify(this.memoryStart)}, ${hexify(this.memoryStart + this.memorySize - BigInt(1))}]`);
+        }
+
+        // Perform insertion 
+        if (this.memoryRegions.length == 0) {
+            // Empty list, just push it
+            this.memoryRegions.push(region);
+        } else {
+            // Non-empty list, need to insert the region at the correct location
+            // also handle collision problem
+
+            // First check if there is any collision
+            // If collision, throw error
+            // Then check if can merge
+            // Finally do the insertion at correct location
+            let regionStartAddr = region.regionStart;
+            let index;
+            for (index = 0; index < this.memoryRegions.length; index++) {
+                let currentRegion = this.memoryRegions[index];
+                if (currentRegion.isOverlap(region)) {
+                    // Overlap occurs, cannot merge, throw error
+                    let currRangeStr = currentRegion.getRegionRangeString();
+                    let incomingRangeStr = region.getRegionRangeString();
+                    throw new MemoryError(`Overlapping regions: existing: ${currRangeStr} `
+                        + `incoming: ${incomingRangeStr}`)
+                } else if (currentRegion.isAlignLower(region)) {
+                    // Two regions align at currentRegion.regionStart, merge
+                    // incoming with the currentRegion
+                    // 0x0: |--------------------------->
+                    //          [region][currentRegion]
+                    // No need to check for collision with previous region of currentRegion
+                    // as it was done in prior cycle
+                    if (region.merge(currentRegion)) {
+                        // Successful merge, we are done
+                        return;
+                    } else {
+                        throw new MemoryError(`Encounter error when merging ${region.getRegionRangeString()} with `
+                            + `${currentRegion.getRegionRangeString()}`);
+                    }
+                } else if (currentRegion.isHigherThan(region)) {
+                    // If currentRegion is of higher memory address than incoming region
+                    // we should stop seeking for possible merging opportunity and insert
+                    // incoming region directly to memory region list
+                    break;
+                }
+            }
+
+            // No collision, just insert the region to top memory map
+            // to the right location
+            this.memoryRegions.splice(index, 0, region);
+        }
+    }
+
+    // TODO: read/write
+    /**
+     * Perform read of memory
+     * @param address Read address
+     * @param size Read size
+     * @returns Read data payload
+     */
+    read(address: bigint, size: number): Uint8Array {
+        let region = this.findRegion(address, size);
+        return region.read(address, size);
+    }
 
     /**
-     * Write data to the memory region without any sign extension
-     * @param address Address to store the data
-     * @param size data size
-     * @param data data content, with data[0] being written at address
-     *             and data[1] at address + 1, etc.
-     * 
-     *             Memory is endianness agnostic. Core should
-     *             Prepare the data according to its endianness.
+     * Perform write of memory.
+     * Memory is write-allocated, meaning it will automatically adjust memory
+     * region or add new normal memory region to suit a write address
+     * @param address Write address
+     * @param size Write size
+     * @param data Write data payload
      */
-    abstract write(address: bigint, size: number, data: Uint8Array): void;
+    write(address: bigint, size: number, data: Uint8Array): void {
+        try {
+            let region = this.findRegion(address, size);
+            region.write(address, size, data);
+        } catch (MemoryError) {
+            // TODO Write-allocate or enlarge automatically
+            
+        }
+    }
 
     readByte(address: bigint): Uint8Array {
         return this.read(address, 1);
@@ -97,6 +178,98 @@ abstract class BaseMemoryRegion {
     writeDoubleWord(address: bigint, data: Uint8Array): void {
         this.write(address, 8, data);
     }
+
+    /**
+     * Return the region corresponding to the access.
+     * @param address Address of access
+     * @param size Access size
+     * @returns memory region of access
+     * @throws MemoryError if region cannot be found
+     */
+    findRegion(address: bigint, size: number): BaseMemoryRegion {
+        for(const region of this.memoryRegions) {
+            if (region.isValidAccess(address, size)) {
+                return region;
+            }
+        }
+        let endAddress = address + BigInt(size - 1);
+        throw new MemoryError(`Unable to find ${hexify(address)}-${hexify(endAddress)} in memory`);
+    }
+
+    /**
+     * Check if a region can be inserted to memory
+     * @param region Region to be inserted to memory
+     * @returns true if the region can be inserted
+     */
+    isRegionValid(region: BaseMemoryRegion): boolean {
+        return !((region.regionStart < this.memorySize) || 
+                 (region.regionSize > this.memorySize));
+    }
+
+    /**
+     * Print regions and their ranges
+     * @returns region string
+     */
+    printRegions(): string {
+        let res = "";
+        for (let index = 0; index < this.memoryRegions.length; index++) {
+            const region = this.memoryRegions[index];
+            res += `[${index}]: ${region.getRegionRangeString()}\n`;
+        }
+        return res;
+    }
+}
+
+/**
+ * TODO Permission flags? Probably don't want to touch as we are on baremetal
+ */
+abstract class BaseMemoryRegion {
+    // Region start address
+    regionStart: bigint;
+    // Region size
+    regionSize: bigint;
+    // Whether can resize this region
+    resizable: boolean;
+    // Whether can relocate the memory region with a different start address
+    relocatable: boolean;
+    // Whether can be merged with another region
+    mergeable: boolean;
+
+    constructor(_start: bigint, _size: bigint, _resizable: boolean, 
+                _relocatable: boolean, _mergeable: boolean) {
+        if (_start < 0 || _size <= 0) {
+            throw new MemoryRegionError(`Invalid memory region start address (${_start}) or size (${_size})!`);
+        }
+        this.regionStart = _start;
+        this.regionSize = _size;
+        this.resizable = _resizable;
+        this.relocatable = _relocatable;
+        this.mergeable = _mergeable;
+    }
+
+    /**
+     * Read data from the memory region without any sign extension.
+     * @param address Address of the data
+     * @param size data size
+     * @returns A uint8 array with arr[0] at address
+     *          arr[1] at address + 1, etc. 
+     *          
+     *          Memory is endianness agnostic. Core should
+     *          Prepare the data according to its endianness.
+     */
+    abstract read(address: bigint, size: number): Uint8Array;
+
+    /**
+     * Write data to the memory region without any sign extension
+     * @param address Address to store the data
+     * @param size data size
+     * @param data data content, with data[0] being written at address
+     *             and data[1] at address + 1, etc.
+     * 
+     *             Memory is endianness agnostic. Core should
+     *             Prepare the data according to its endianness.
+     */
+    abstract write(address: bigint, size: number, data: Uint8Array): void;
 
     /**
      * Resize the memory region and preserve the memory content
@@ -155,16 +328,10 @@ abstract class BaseMemoryRegion {
             let otherData = other.dumpRegion();
             let isSuccessful = this._mergeHelper(otherData);
             if (!isSuccessful) {
-                let thisRange = this.getRegionRange();
-                let otherRange = other.getRegionRange();
-                let thisRangeStr = thisRange.map(element => {
-                    return hexify(element);
-                });
-                let otherRangeStr = otherRange.map(element => {
-                    return hexify(element);
-                });
-                throw new BaseMemoryError(`Unable to merge region1[${thisRangeStr[0]}, ${thisRangeStr[1]}] `
-                                        + `with region2[${otherRangeStr[0]}, ${otherRangeStr[1]}]`);
+                let thisRangeStr = this.getRegionRangeString();
+                let otherRangeStr = other.getRegionRangeString();
+                throw new MemoryRegionError(`Unable to merge region1: ${thisRangeStr} `
+                                          + `with region2: ${otherRangeStr}`);
             }
             return true;
         }
@@ -200,6 +367,45 @@ abstract class BaseMemoryRegion {
     }
 
     /**
+     * Test if this region is of a lower address than the given other region
+     * @param other Other region
+     * @returns true if this region starts at lower address than the other region
+     */
+    isLowerThan(other: BaseMemoryRegion): boolean {
+        // This regionEnd is non-inclusive
+        let this_regionEnd = this.regionStart + this.regionSize;
+        return this_regionEnd <= other.regionStart;
+    }
+
+    /**
+     * Test if this region is of a higher address than the given other region
+     * @param other Other region
+     * @returns true if this region ends at higher address than the other region
+     */
+    isHigherThan(other: BaseMemoryRegion): boolean {
+        let other_regionEnd = other.regionStart + other.regionSize;
+        return this.regionStart >= other_regionEnd;
+    }
+
+    /**
+     * Test if two regions align at this.regionStart address
+     * @param other Other region
+     * @returns true if other region ends right at this region starts
+     */
+    isAlignLower(other: BaseMemoryRegion): boolean {
+        return this.regionStart == (other.regionStart + other.regionSize);
+    }
+
+    /**
+     * Test if two regions align at other.regionStart address
+     * @param other Other region
+     * @returns true if other region starts right at this region ends
+     */
+    isAlignHigher(other: BaseMemoryRegion): boolean {
+        return other.isAlignLower(this);
+    }
+
+    /**
      * Check if an access is within range
      * @param address Access start address
      * @param size Access byte size
@@ -221,16 +427,20 @@ abstract class BaseMemoryRegion {
         let end = this.regionStart + this.regionSize - BigInt(1);
         return [start, end];
     }
-}
 
-/**
- * Base memory exception class
- */
-class BaseMemoryError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "MemoryError";
+    /**
+     * Get region range but in hexstring
+     * @returns Hexstring for region start and end address
+     */
+    getRegionRangeString(): string {
+        let pair = this.getRegionRange().map(element => {
+            return hexify(element);
+        });
+
+        return `[${pair[0]}, ${pair[1]}]`
     }
+
+
 }
 
 /**
@@ -250,7 +460,7 @@ class NormalMemoryRegion extends BaseMemoryRegion {
     read(address: bigint, size: number): Uint8Array {
         if (!this.isValidAccess(address, size)) {
             let regionEnd = this.regionStart + this.regionSize - BigInt(1);
-            throw new BaseMemoryError(`Read address out of bound, `
+            throw new MemoryRegionError(`Read address out of bound, `
                 + `expecting within [${hexify(this.regionStart)}, ${hexify(regionEnd)}] `
                 + `but got ${hexify(address)}-${hexify(address + BigInt(size))}`);
         }
@@ -266,7 +476,7 @@ class NormalMemoryRegion extends BaseMemoryRegion {
     write(address: bigint, size: number, data: Uint8Array): void {
         if (!this.isValidAccess(address, size)) {
             let regionEnd = this.regionStart + this.regionSize - BigInt(1);
-            throw new BaseMemoryError(`Write address out of bound, `
+            throw new MemoryRegionError(`Write address out of bound, `
                 + `expecting within [${hexify(this.regionStart)}, ${hexify(regionEnd)}] `
                 + `but got ${hexify(address)}-${hexify(address + BigInt(size))}`);
         }
