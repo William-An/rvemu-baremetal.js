@@ -4,8 +4,6 @@
 
 import { hexify, BigintPair } from "./utils"
 
-type Endianness = "big" | "little";
-
 /**
  * Base memory exception class
  */
@@ -285,8 +283,8 @@ class Memory {
      * @returns true if the region can be inserted
      */
     isRegionValid(region: BaseMemoryRegion): boolean {
-        let regionAddressRangeValid = !((region.regionStart < this.memorySize) || 
-                                        (region.regionSize > this.memorySize));
+        let regionAddressRangeValid = !((region.regionStart < this.memoryStart) || 
+                                        ((region.regionStart + region.regionSize) > (this.memoryStart + this.memorySize)));
         let defaultSizeMask = this.defaultMemRegionSize - BigInt(1);
         let regionAlignedDefaultSize = (region.regionStart & defaultSizeMask) === BigInt(0);
         return regionAddressRangeValid && regionAlignedDefaultSize;
@@ -656,4 +654,14 @@ abstract class BaseMMIOMemoryRegion extends BaseMemoryRegion {
     _mergeHelper(otherData: Buffer): boolean {
         return false;
     }
+}
+
+export {
+    Memory,
+    BaseMMIOMemoryRegion,
+    BaseMemoryRegion,
+    NormalMemoryRegion,
+    BaseMemoryError,
+    MemoryError,
+    MemoryRegionError,
 }

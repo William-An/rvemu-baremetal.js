@@ -2,13 +2,14 @@
   "name": "rvemu-baremetal.js",
   "version": "1.0.0",
   "description": "Javascript RISCV emulator",
-  "main": "./dist/main.js",
-  "types": "./dist/main.d.ts",
+  "main": "./dist/src/main.js",
+  "types": "./dist/src/main.d.ts",
   "directories": {
     "test": "test"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "test": "mocha -r ts-node/register 'test/**/*.ts'"
   },
   "repository": {
     "type": "git",
@@ -24,7 +25,10 @@
   },
   "homepage": "https://github.com/William-An/rvemu-baremetal.js#readme",
   "devDependencies": {
+    "@types/mocha": "^10.0.3",
     "@types/node": "^20.8.8",
+    "mocha": "^10.2.0",
+    "ts-node": "^10.9.1",
     "typescript": "^5.2.2"
   }
 }
