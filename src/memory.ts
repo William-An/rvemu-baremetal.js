@@ -49,21 +49,22 @@ class Memory {
     }
 
     /**
-     * Add a memory region to the region list, throw error.
-     *      If the incoming region collides with existing regions in the list,
+     * Add a memory region to the region list.
+     * Region has to be aligned to the defaultMemRegionSize, else error will be thrown.
+     * If the incoming region collides with existing regions in the list, throw error.
      *      since the incoming region and existing regions might have contents
      *      on overlapping addresses.
      * If no collision and no merging opportunity, we insert the incoming region
      *      at sorted position according to its start address 
      * @param region Incoming region to be added
-     * @returns 
+     * @throws MemoryRegionError
      */
     addMemoryRegion(region: BaseMemoryRegion): void {
         // Check if the region is within bound of memory start and size
         if (!this.isRegionValid(region)) {
             // If invalid region
             let regionEnd = region.regionStart + region.regionSize - BigInt(1);
-            throw new MemoryError(`Invalid memory region [${hexify(region.regionStart)}, ${hexify(regionEnd)}] `
+            throw new MemoryRegionError(`Invalid memory region [${hexify(region.regionStart)}, ${hexify(regionEnd)}] `
                 + `for memory [${hexify(this.memoryStart)}, ${hexify(this.memoryStart + this.memorySize - BigInt(1))}]`);
         }
 
@@ -87,7 +88,7 @@ class Memory {
                     // Overlap occurs, cannot merge, throw error
                     let currRangeStr = currentRegion.getRegionRangeString();
                     let incomingRangeStr = region.getRegionRangeString();
-                    throw new MemoryError(`Overlapping regions: existing: ${currRangeStr} `
+                    throw new MemoryRegionError(`Overlapping regions: existing: ${currRangeStr} `
                         + `incoming: ${incomingRangeStr}`)
                 } else if (currentRegion.isAlignLower(region)) {
                     // Two regions align at currentRegion.regionStart, merge
@@ -100,8 +101,8 @@ class Memory {
                         // Successful merge, we are done
                         return;
                     } else {
-                        throw new MemoryError(`Encounter error when merging ${region.getRegionRangeString()} with `
-                            + `${currentRegion.getRegionRangeString()}`);
+                        // Unable to merge, we just insert it
+                        break;
                     }
                 } else if (currentRegion.isHigherThan(region)) {
                     // If currentRegion is of higher memory address than incoming region
@@ -117,14 +118,19 @@ class Memory {
         }
     }
 
-    // TODO: read/write
     /**
-     * Perform read of memory
+     * Perform read of memory, expecting the address to be presented
+     * in the memory, else will raise error.
+     * 
+     * Does not support cross region read
      * @param address Read address
      * @param size Read size
      * @returns Read data payload
+     * @throws MemoryError
      */
     read(address: bigint, size: number): Uint8Array {
+        if (!this.isAccessAligned(address, size))
+            throw new MemoryError(`Not aligned read of ${hexify(address)} with width ${size}`);
         let region = this.findRegion(address, size);
         return region.read(address, size);
     }
@@ -133,17 +139,94 @@ class Memory {
      * Perform write of memory.
      * Memory is write-allocated, meaning it will automatically adjust memory
      * region or add new normal memory region to suit a write address
+     * 
+     * Does not support cross region write
      * @param address Write address
      * @param size Write size
      * @param data Write data payload
+     * @throws MemoryError | MemoryRegionError
      */
     write(address: bigint, size: number, data: Uint8Array): void {
+        if (!this.isAccessAligned(address, size))
+            throw new MemoryError(`Not aligned write of ${hexify(address)} with width ${size}`);
         try {
             let region = this.findRegion(address, size);
             region.write(address, size, data);
-        } catch (MemoryError) {
-            // TODO Write-allocate or enlarge automatically
-            
+        } catch (MemoryRegionError) {
+            let regionAlignedAddress = address & (this.defaultMemRegionSize - BigInt(1));
+            if (this.memoryRegions.length == 0) {
+                // Empty list case, add a new normal region to it
+                let region = new NormalMemoryRegion(regionAlignedAddress, this.defaultMemRegionSize);
+                region.write(address, size, data);
+                this.addMemoryRegion(region);
+            } else {
+                // Non-empty list, find the closest region
+                // and see if we can enlarge it or add a new one instead
+
+                // Find closest region from address to region end address
+                let closestRegion: BaseMemoryRegion | undefined = undefined;
+                let minDistance = this.defaultMemRegionSize;
+                for(const region of this.memoryRegions) {
+                    if (region.isAddressHigher(address)) {
+                        let regionEnd = region.regionStart + region.regionSize - BigInt(1);
+                        let distance = address - regionEnd;
+                        if (distance < minDistance) {
+                            closestRegion = region;
+                            minDistance = distance;
+                        }
+                    }
+                }
+
+                // Check for closest region result
+                if (closestRegion == undefined) {
+                    // Could not find a region that has it end address
+                    // within defaultMemRegionSize distance to the access address
+                    // Insert a new region and merge with upper region in case
+                    // of collision
+                    let newRegionEnd = regionAlignedAddress + this.defaultMemRegionSize;
+                    try {
+                        // Poke to see if the new region end was in the one of the regions
+                        let region = this.findRegion(newRegionEnd, 1);
+
+                        // Create new region at boundary of the found region
+                        newRegionEnd = region.regionStart;
+                        let newRegionSize = region.regionStart - regionAlignedAddress;
+                        let newRegion = new NormalMemoryRegion(regionAlignedAddress, newRegionSize);
+
+                        // Perform data write
+                        newRegion.write(address, size, data);
+                        if (region.mergeable) {
+                            // Found region mergeable, merge with new region
+                            newRegion.merge(region);
+                            
+                            // Replace region with newRegion in the list
+                            let index = this.memoryRegions.indexOf(region);
+                            this.memoryRegions[index] = newRegion;
+                        } else {
+                            // Upper region not mergeable, just insert the newRegion
+                            this.addMemoryRegion(newRegion);
+                        }
+                    } catch (MemoryError) {
+                        // No mergeable/aligned region found in list, just create a new one
+                        let newRegion = new NormalMemoryRegion(regionAlignedAddress, this.defaultMemRegionSize);
+                        newRegion.write(address, size, data);
+                        this.addMemoryRegion(newRegion);
+                    }
+                } else {
+                    // Has a close region, perform resizing
+                    if (closestRegion.resizable) {
+                        let newRegionEnd = regionAlignedAddress + this.defaultMemRegionSize;
+                        let newRegionSize = newRegionEnd - closestRegion.regionStart;
+                        closestRegion.resize(newRegionSize);
+                        closestRegion.write(address, size, data);
+                    } else {
+                        // Unresizable region lies on the boundary,
+                        // in order to keep memory regionally aligned, we give up.
+                        throw new MemoryError(`A unresizable region(${closestRegion.getRegionRangeString()}) lies on the defaultMemRegionSize`
+                            + `(${hexify(this.defaultMemRegionSize)}) boundary, unable to perform write of ${hexify(address)} of size ${size}.`);
+                    }
+                }
+            }
         }
     }
 
@@ -193,7 +276,7 @@ class Memory {
             }
         }
         let endAddress = address + BigInt(size - 1);
-        throw new MemoryError(`Unable to find ${hexify(address)}-${hexify(endAddress)} in memory`);
+        throw new MemoryRegionError(`Unable to find ${hexify(address)}-${hexify(endAddress)} in memory`);
     }
 
     /**
@@ -202,8 +285,26 @@ class Memory {
      * @returns true if the region can be inserted
      */
     isRegionValid(region: BaseMemoryRegion): boolean {
-        return !((region.regionStart < this.memorySize) || 
-                 (region.regionSize > this.memorySize));
+        let regionAddressRangeValid = !((region.regionStart < this.memorySize) || 
+                                        (region.regionSize > this.memorySize));
+        let defaultSizeMask = this.defaultMemRegionSize - BigInt(1);
+        let regionAlignedDefaultSize = (region.regionStart & defaultSizeMask) === BigInt(0);
+        return regionAddressRangeValid && regionAlignedDefaultSize;
+    }
+    
+
+    /**
+     * Check if an access is aligned with access size and access size
+     * if of power of 2.
+     * @param address Access address
+     * @param size Access size
+     * @returns true if access is aligned and size if of power of 2
+     */
+    isAccessAligned(address: bigint, size: number): boolean {
+        let isSizePowerOf2 = (size != 0) && !(size & (size - 1))
+        let sizeMask = BigInt(size - 1);
+        let isAddressAlignedSize = (address & sizeMask) === BigInt(0);
+        return isSizePowerOf2 && isAddressAlignedSize;
     }
 
     /**
@@ -378,6 +479,15 @@ abstract class BaseMemoryRegion {
     }
 
     /**
+     * Test if an incoming address is lower than this region
+     * @param address incoming address
+     * @returns true if incoming address is lower than this region start address
+     */
+    isAddressLower(address: bigint): boolean {
+        return address < this.regionStart;
+    }
+
+    /**
      * Test if this region is of a higher address than the given other region
      * @param other Other region
      * @returns true if this region ends at higher address than the other region
@@ -385,6 +495,15 @@ abstract class BaseMemoryRegion {
     isHigherThan(other: BaseMemoryRegion): boolean {
         let other_regionEnd = other.regionStart + other.regionSize;
         return this.regionStart >= other_regionEnd;
+    }
+
+    /**
+     * Test if an incoming address is higher than this region
+     * @param address incoming address
+     * @returns true if incoming address is higher than this region end address
+     */
+    isAddressHigher(address: bigint): boolean {
+        return address >= (this.regionStart + this.regionSize);
     }
 
     /**
