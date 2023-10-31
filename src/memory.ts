@@ -421,14 +421,18 @@ abstract class BaseMemoryRegion {
      * @returns true if merged is successful
      */
     merge(other: BaseMemoryRegion): boolean {
+        let thisRangeStr = this.getRegionRangeString();
+        let otherRangeStr = other.getRegionRangeString();
         if (!this.mergeable || !other.mergeable)
             return false;
         else {
+            // Check for merge alignment
+            if (other.regionStart !== (this.regionStart + this.regionSize))
+                throw new MemoryRegionError(`Unable to merge region1: ${thisRangeStr} `
+                + `with region2: ${otherRangeStr}`);
             let otherData = other.dumpRegion();
             let isSuccessful = this._mergeHelper(otherData);
             if (!isSuccessful) {
-                let thisRangeStr = this.getRegionRangeString();
-                let otherRangeStr = other.getRegionRangeString();
                 throw new MemoryRegionError(`Unable to merge region1: ${thisRangeStr} `
                                           + `with region2: ${otherRangeStr}`);
             }
@@ -530,7 +534,7 @@ abstract class BaseMemoryRegion {
      */
     isValidAccess(address: bigint, size: number): boolean {
         let accessStart = address - this.regionStart;
-        let accessEnd = accessStart + BigInt(size);
+        let accessEnd = accessStart + BigInt(size - 1);
         let regionEnd = this.regionStart + this.regionSize - BigInt(1);
         return !(accessStart < 0 || accessEnd < 0 || accessEnd >= this.regionSize);
     }
