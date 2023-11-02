@@ -178,9 +178,22 @@ class MemoryWriteCommand implements fc.Command<MemoryTestModel, Memory> {
         // Changed real system
         r.write(this.addr, this.size, this.payload);
         // Changed model by push the region range
-        // if it does not exist
+        // if it is not covered in the range list
         let region = r.findRegion(this.addr, this.size);
+        let regionStart = region.regionStart;
+        let regionEnd = region.regionStart + region.regionSize;
         let range: MemoryTestModelRegionRange = [region.regionStart, region.regionStart + region.regionSize];
+        for (let existingRegion of m) {
+            let oldRegionStart = existingRegion[0];
+            let oldRegionEnd = existingRegion[1];
+            if (oldRegionStart <= regionStart && regionEnd >= regionEnd) {
+                // This region covered by an existing region
+                // range in the model
+                return;
+            }
+        }
+
+        // Not covered, add to list
         m.push(range);
     }
 
@@ -356,14 +369,38 @@ describe("MemoryModelBasedTest", function () {
         WriteAccessArb(AlignedAccessArb(memoryStart, memorySize)).map((access) => new MemoryWriteCommand(access)),
     ];
 
-    it("can handle random R/W sequence", () => {
-        let prop = fc.property(fc.commands(MemoryCommands, { size:"+1" }), (cmds) => {
+    let rwProp = (_size: fc.SizeForArbitrary) => {
+        return fc.property(fc.commands(MemoryCommands, { size: _size }), (cmds) => {
             const s = () => ({model: new Array<MemoryTestModelRegionRange>(), real: new Memory(memoryStart, memorySize, defaultMemRegionSize)});
             fc.modelRun(s, cmds);
         });
+    }
 
+    it("can handle random R/W sequence (xsmall)", () => {
+        let prop = rwProp("small");
         fc.assert(prop);
     });
+
+    it("can handle random R/W sequence (small)", () => {
+        let prop = rwProp("small");
+        fc.assert(prop);
+    });
+
+    it("can handle random R/W sequence (medium)", () => {
+        let prop = rwProp("medium");
+        fc.assert(prop);
+    });
+
+    it("can handle random R/W sequence (large)", () => {
+        let prop = rwProp("large");
+        fc.assert(prop);
+    });
+
+    // TODO This test need longer time to run
+    // it("can handle random R/W sequence (xlarge)", () => {
+    //     let prop = rwProp("xlarge");
+    //     fc.assert(prop);
+    // });
 });
 
 // Normal memory region property test via fast-check
