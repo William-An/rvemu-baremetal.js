@@ -1,4 +1,5 @@
 import { Memory, MemoryRegionError, NormalMemoryRegion } from "../src/memory";
+import { hexify } from "../src/utils"
 import { assert, expect, should } from "chai";
 import fc, { bigInt } from "fast-check";
 
@@ -11,10 +12,34 @@ import fc, { bigInt } from "fast-check";
 let AddressArb = fc.bigUintN(48);
 let SmallAddressArb = fc.bigUintN(10);
 let InvalidAddressArb = fc.bigUintN(48).map((addr) => -addr);
+// Aligned address arb, alignAddr must be power of 2, generated
+// address will be multiple of alignAddr
+let AlignedAddressArb = (alignAddr: bigint) => AddressArb.filter((addr) => (addr & (alignAddr - 1n)) === 0n);
+
+// Memory related arbitraries
+let MemoryStartArb = AlignedAddressArb;
+// Memory size needs to be multiple of region size
+let MemorySizeArb = (minRegionSize: bigint) => fc.bigUintN(48).filter((s) => (s % minRegionSize === 0n) && (s > minRegionSize));
+// Memory default region size, ranges from 256 bytes to 65536 bytes, guaranteed to be power of 2
+let MemoryDefaultRegionSizeArb = fc.integer({ min: 8, max: 16 }).map((b) => 2n ** BigInt(b));
+// Memory arb
+// memory size lower bound given from default region size arb
+let MemoryArb = MemoryDefaultRegionSizeArb.chain((defSize) => {
+    return fc.tuple(MemoryStartArb(defSize),
+        MemorySizeArb(defSize),
+        fc.constant(defSize))
+        .map((args) => {
+            let startAddr = args[0];
+            let size = args[1];
+            let defaultSize = args[2];
+            return new Memory(startAddr, size, defaultSize);
+        });
+});
 
 // Size up to 64KB
 let RegionSizeArb = fc.bigUintN(16).filter((n) => n > 0);
 let InvalidRegionSizeArb = fc.bigUintN(16).map((n) => -n);
+let AlignedRegionSizeArb = MemoryDefaultRegionSizeArb;
 
 // Regular region (> 32 bytes) to speed up testing
 let RegularRegionSizeArb = fc.bigUintN(16).filter((n) => n > 32);
@@ -23,6 +48,10 @@ let SmallRegularRegionSizeArb = fc.bigUintN(12).filter((n) => n > 32);
 
 // Proper NormalMemoryRegion arbitrary
 let NormalMemoryRegionArb = (addrArb: fc.Arbitrary<bigint>, sizeArb: fc.Arbitrary<bigint>) => fc.tuple(addrArb, sizeArb).map((args) => new NormalMemoryRegion(args[0], args[1]));
+// NormalMemoryRegion arbitrary within address range
+let RangedNormalMemoryRegionArb = (addrArb: fc.Arbitrary<bigint>, sizeArb: fc.Arbitrary<bigint>, startAddr: bigint, endAddr: bigint) => NormalMemoryRegionArb(addrArb, sizeArb).filter((region) => region.regionStart >= startAddr && (region.regionStart + region.regionSize) <= endAddr);
+// NormalMemoryRegion out of a certain address range
+let OutRangedNormalMemoryRegionArb = (addrArb: fc.Arbitrary<bigint>, sizeArb: fc.Arbitrary<bigint>, startAddr: bigint, endAddr: bigint) => NormalMemoryRegionArb(addrArb, sizeArb).filter((region) => region.regionStart < startAddr || (region.regionStart + region.regionSize) > endAddr);
 
 // Random pair
 let NormalMemoryRegionPairArb = fc.tuple(NormalMemoryRegionArb(AddressArb, RegionSizeArb), NormalMemoryRegionArb(AddressArb, RegionSizeArb));
@@ -86,9 +115,85 @@ let WriteAccessArb = (accessArb: fc.Arbitrary<[bigint, number]>) => {
 let ReadAccessArb = (accessArb: fc.Arbitrary<[bigint, number]>) => accessArb;
 
 /**
+ * Model-based test helper
+ */
+// Model region range, first is start (inclusive), 
+// second is end address (exclusive)
+type MemoryTestModelRegionRange = [bigint, bigint];
+// The model store the valid regions in the memory
+type MemoryTestModel = MemoryTestModelRegionRange[];
+class MemoryReadCommand implements fc.Command<MemoryTestModel, Memory> {
+    readonly addr;
+    readonly size;
+    constructor(readAccess: [bigint, number]) {
+        this.addr = readAccess[0];
+        this.size = readAccess[1];
+    }
+
+    check(m: Readonly<MemoryTestModel>): boolean {
+        let ready = false;
+        let accessStart = this.addr;
+        let accessEnd = accessStart + BigInt(this.size);
+        for (let range of m) {
+            let regionStart = range[0];
+            let regionEnd = range[1];
+            if (accessStart >= regionStart && 
+                accessEnd <= regionEnd) {
+                ready = true;
+                break;
+            }
+        }
+
+        return ready
+    }
+
+    run(m: MemoryTestModel, r: Memory) {
+        // Changed real system
+        r.read(this.addr, this.size);
+        // No changes to model since we only modify
+        // region on write()
+    }
+
+    toString(): string {
+        // Inclusive end address
+        let end = this.addr + BigInt(this.size) - 1n;
+        return `read[${hexify(this.addr)}-${hexify(end)}]`
+    }
+}
+class MemoryWriteCommand implements fc.Command<MemoryTestModel, Memory> {
+    readonly addr;
+    readonly size;
+    readonly payload;
+    constructor(writeAccess: [bigint, number, Uint8Array]) {
+        this.addr = writeAccess[0];
+        this.size = writeAccess[1];
+        this.payload = writeAccess[2];
+    }
+
+    check(m: Readonly<MemoryTestModel>): boolean {
+        return true;
+    }
+
+    run(m: MemoryTestModel, r: Memory) {
+        // Changed real system
+        r.write(this.addr, this.size, this.payload);
+        // Changed model by push the region range
+        // if it does not exist
+        let region = r.findRegion(this.addr, this.size);
+        let range: MemoryTestModelRegionRange = [region.regionStart, region.regionStart + region.regionSize];
+        m.push(range);
+    }
+
+    toString(): string {
+        // Inclusive end address
+        let end = this.addr + BigInt(this.size) - 1n;
+        return `write[${hexify(this.addr)}-${hexify(end)}]`
+    }
+}
+
+/**
  * Test suites
  */
-// TODO Memory model test? https://fast-check.dev/docs/advanced/model-based-testing/
 
 // Memory class unit test
 describe("MemoryUnittest", function () {
@@ -161,6 +266,106 @@ describe("MemoryUnittest", function () {
     });
 });
 
+// Memory property test via fast-check
+describe("MemoryPropertyTest", function () {
+    it("can add normal memory region if within range", function () {
+        let prop = fc.property(MemoryArb, fc.gen(), (memory, gen) => {
+            let regionSize = memory.defaultMemRegionSize;
+            let maxRegionCount = memory.memorySize / regionSize;
+            let multiple = gen(fc.nat, {max: Number(maxRegionCount) - 1});
+            let startAddr = memory.memoryStart + regionSize * BigInt(multiple);
+            let region = new NormalMemoryRegion(startAddr, regionSize);
+            
+            memory.addMemoryRegion(region);
+        });
+        fc.assert(prop);
+    });
+
+    it("cannot add normal memory region out of specified range", function () {
+        let prop = fc.property(MemoryArb, fc.gen(), (memory, gen) => {
+            let prop = fc.property(MemoryArb, fc.gen(), (memory, gen) => {
+                let alignedAddr = memory.defaultMemRegionSize;
+                let inRangeRegion = gen(OutRangedNormalMemoryRegionArb, AlignedAddressArb(alignedAddr), fc.constant(memory.defaultMemRegionSize), memory.memoryStart, memory.memoryStart + memory.memorySize);
+                expect(memory.addMemoryRegion(inRangeRegion)).to.throw(MemoryRegionError);
+            });
+        });
+        fc.assert(prop);
+    });
+
+    it("can find address within region if added", function () {
+        let prop = fc.property(NormalMemoryRegionArb(AlignedAddressArb(2048n), AlignedRegionSizeArb), fc.gen(), (region, gen) => {
+            // An inclusive memory space
+            let memory = new Memory(0x0n, 0x1000000000000n, 2048n);
+
+            memory.addMemoryRegion(region);
+            let access = gen(AlignedAccessArb, region.regionStart, region.regionSize);
+            return memory.findRegion(access[0], access[1]) === region;
+        });
+        fc.assert(prop);
+    });
+
+    it("read should get previous written value", function () {
+        let prop = fc.property(NormalMemoryRegionArb(AlignedAddressArb(2048n), AlignedRegionSizeArb), fc.gen(), (region, gen) => {
+            // An inclusive memory space
+            let memory = new Memory(0x0n, 0x1000000000000n, 2048n);
+            
+            memory.addMemoryRegion(region);
+            let write = gen(WriteAccessArb, AlignedAccessArb(region.regionStart, region.regionSize));
+            let addr = write[0];
+            let size = write[1];
+            let payload = write[2];
+            
+            memory.write(addr, size, payload);
+
+            let result = memory.read(addr, size);
+            expect(result).to.eql(payload);
+        });
+        fc.assert(prop);
+    });
+
+    it("write should overwrite data", function () {
+        let prop = fc.property(NormalMemoryRegionArb(AlignedAddressArb(2048n), AlignedRegionSizeArb), fc.gen(), (region, gen) => {
+            // An inclusive memory space
+            let memory = new Memory(0x0n, 0x1000000000000n, 2048n);
+            
+            memory.addMemoryRegion(region);
+            let write = gen(WriteAccessArb, AlignedAccessArb(region.regionStart, region.regionSize));
+            let addr = write[0];
+            let size = write[1];
+            let payload = write[2];
+            
+            memory.write(addr, size, payload);
+
+            let payload2 = gen(PayloadArb, size);
+            memory.write(addr, size, payload2);
+
+            let result = memory.read(addr, size);
+            expect(result).to.eql(payload2);
+        });
+        fc.assert(prop);
+    });
+});
+
+// Memory model based test via fast-check
+describe("MemoryModelBasedTest", function () {
+    let memoryStart = 0x0n;
+    let memorySize = 0x1000000000000n;
+    let defaultMemRegionSize = 2048n;
+    const MemoryCommands = [
+        ReadAccessArb(AlignedAccessArb(memoryStart, memorySize)).map((access) => new MemoryReadCommand(access)),
+        WriteAccessArb(AlignedAccessArb(memoryStart, memorySize)).map((access) => new MemoryWriteCommand(access)),
+    ];
+
+    it("can handle random R/W sequence", () => {
+        let prop = fc.property(fc.commands(MemoryCommands, { size:"+1" }), (cmds) => {
+            const s = () => ({model: new Array<MemoryTestModelRegionRange>(), real: new Memory(memoryStart, memorySize, defaultMemRegionSize)});
+            fc.modelRun(s, cmds);
+        });
+
+        fc.assert(prop);
+    });
+});
+
 // Normal memory region property test via fast-check
 describe("NormalMemoryRegionPropertyTest", function () {
     it("cannot relocate", () => {
@@ -173,7 +378,7 @@ describe("NormalMemoryRegionPropertyTest", function () {
 
     it("cannot merge if two regions are not consecutive", () => {
         fc.assert(fc.property(InconsecutiveMemoryRegionArb, (regions) => {
-            expect(function() {regions[1].merge(regions[0]);}).to.throw(MemoryRegionError);
+            expect(function () { regions[1].merge(regions[0]); }).to.throw(MemoryRegionError);
         }));
     });
 
@@ -204,7 +409,7 @@ describe("NormalMemoryRegionPropertyTest", function () {
 
     it("invalid start address and size should raise error", () => {
         let prop = fc.property(InvalidAddressArb, InvalidRegionSizeArb, (addr, size) => {
-            expect(function() {new NormalMemoryRegion(addr, size)}).to.throw(MemoryRegionError);
+            expect(function () { new NormalMemoryRegion(addr, size) }).to.throw(MemoryRegionError);
         });
         fc.assert(prop);
     });
@@ -212,7 +417,7 @@ describe("NormalMemoryRegionPropertyTest", function () {
     it("if overlap, cannot higher than", () => {
         let prop = fc.property(
             NormalMemoryRegionPairArb
-            .filter((pair) => pair[0].isOverlap(pair[1])),
+                .filter((pair) => pair[0].isOverlap(pair[1])),
             (pair) => !pair[0].isHigherThan(pair[1])
         );
         fc.assert(prop);
@@ -221,7 +426,7 @@ describe("NormalMemoryRegionPropertyTest", function () {
     it("if overlap, cannot lower than", () => {
         let prop = fc.property(
             NormalMemoryRegionPairArb
-            .filter((pair) => pair[0].isOverlap(pair[1])),
+                .filter((pair) => pair[0].isOverlap(pair[1])),
             (pair) => !pair[0].isLowerThan(pair[1])
         );
         fc.assert(prop);
@@ -232,7 +437,7 @@ describe("NormalMemoryRegionPropertyTest", function () {
     it("if other align lower, has to be higher than other", () => {
         let prop = fc.property(
             NormalMemoryRegionPairArb
-            .filter((pair) => pair[0].isAlignLower(pair[1])),
+                .filter((pair) => pair[0].isAlignLower(pair[1])),
             (pair) => pair[0].isHigherThan(pair[1])
         );
         fc.assert(prop);
@@ -241,7 +446,7 @@ describe("NormalMemoryRegionPropertyTest", function () {
     it("if other align higher, has to be lower than other", () => {
         let prop = fc.property(
             NormalMemoryRegionPairArb
-            .filter((pair) => pair[0].isAlignHigher(pair[1])),
+                .filter((pair) => pair[0].isAlignHigher(pair[1])),
             (pair) => pair[0].isLowerThan(pair[1])
         );
         fc.assert(prop);
@@ -278,7 +483,7 @@ describe("NormalMemoryRegionPropertyTest", function () {
             // Second write
             let payload2 = gen(PayloadArb, size);
             region.write(addr, size, payload2);
-            
+
             // Test read
             let readResult = region.read(addr, size);
 
