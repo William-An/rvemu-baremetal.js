@@ -151,7 +151,7 @@ class Memory {
             let region = this.findRegion(address, size);
             region.write(address, size, data);
         } catch (MemoryRegionError) {
-            let regionAlignedAddress = address & (this.defaultMemRegionSize - BigInt(1));
+            let regionAlignedAddress = address & ~(this.defaultMemRegionSize - BigInt(1));
             if (this.memoryRegions.length == 0) {
                 // Empty list case, add a new normal region to it
                 let region = new NormalMemoryRegion(regionAlignedAddress, this.defaultMemRegionSize);
