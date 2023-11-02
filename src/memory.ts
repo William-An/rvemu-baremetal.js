@@ -348,6 +348,7 @@ abstract class BaseMemoryRegion {
 
     /**
      * Read data from the memory region without any sign extension.
+     * Address alignment is implementation depending
      * @param address Address of the data
      * @param size data size
      * @returns A uint8 array with arr[0] at address
@@ -360,6 +361,7 @@ abstract class BaseMemoryRegion {
 
     /**
      * Write data to the memory region without any sign extension
+     * Address alignment is implementation depending
      * @param address Address to store the data
      * @param size data size
      * @param data data content, with data[0] being written at address

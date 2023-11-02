@@ -173,12 +173,7 @@ describe("NormalMemoryRegionPropertyTest", function () {
 
     it("cannot merge if two regions are not consecutive", () => {
         fc.assert(fc.property(InconsecutiveMemoryRegionArb, (regions) => {
-            try {
-                regions[1].merge(regions[0]);
-            } catch (MemoryRegionError) {
-                return true
-            }
-            return false;
+            expect(function() {regions[1].merge(regions[0]);}).to.throw(MemoryRegionError);
         }));
     });
 
@@ -204,6 +199,51 @@ describe("NormalMemoryRegionPropertyTest", function () {
             expect(readResult).to.eql(payload);
         });
 
+        fc.assert(prop);
+    });
+
+    it("invalid start address and size should raise error", () => {
+        let prop = fc.property(InvalidAddressArb, InvalidRegionSizeArb, (addr, size) => {
+            expect(function() {new NormalMemoryRegion(addr, size)}).to.throw(MemoryRegionError);
+        });
+        fc.assert(prop);
+    });
+
+    it("if overlap, cannot higher than", () => {
+        let prop = fc.property(
+            NormalMemoryRegionPairArb
+            .filter((pair) => pair[0].isOverlap(pair[1])),
+            (pair) => !pair[0].isHigherThan(pair[1])
+        );
+        fc.assert(prop);
+    });
+
+    it("if overlap, cannot lower than", () => {
+        let prop = fc.property(
+            NormalMemoryRegionPairArb
+            .filter((pair) => pair[0].isOverlap(pair[1])),
+            (pair) => !pair[0].isLowerThan(pair[1])
+        );
+        fc.assert(prop);
+    });
+
+    // TODO Can optimize for test run time to create aligned
+    // TODO region arbitrary
+    it("if other align lower, has to be higher than other", () => {
+        let prop = fc.property(
+            NormalMemoryRegionPairArb
+            .filter((pair) => pair[0].isAlignLower(pair[1])),
+            (pair) => pair[0].isHigherThan(pair[1])
+        );
+        fc.assert(prop);
+    });
+
+    it("if other align higher, has to be lower than other", () => {
+        let prop = fc.property(
+            NormalMemoryRegionPairArb
+            .filter((pair) => pair[0].isAlignHigher(pair[1])),
+            (pair) => pair[0].isLowerThan(pair[1])
+        );
         fc.assert(prop);
     });
 
@@ -251,66 +291,24 @@ describe("NormalMemoryRegionPropertyTest", function () {
     // Fast-check too long for testing if throw or not
     // use sample instead
     it("read out of range should raise error", () => {
-        let regionStart = BigInt(0x10000);
-        let regionSize = BigInt(0x40000);
-        let region = new NormalMemoryRegion(regionStart, regionSize);
-        let address = BigInt(0x0);
-        let size = 4;
-        expect(() => region.read(address, size)).to.throw(MemoryRegionError);
-    });
-
-    it("write out of range should raise error", () => {
-        let regionStart = BigInt(0x10000);
-        let regionSize = BigInt(0x40000);
-        let region = new NormalMemoryRegion(regionStart, regionSize);
-        let address = BigInt(0x0);
-        let size = 4;
-        let payload = new Uint8Array([1, 2, 3, 4]);
-        expect(() => region.write(address, size, payload)).to.throw(MemoryRegionError);
-    });
-
-    it("invalid start address and size should raise error", () => {
-        let prop = fc.property(InvalidAddressArb, InvalidRegionSizeArb, (addr, size) => {
-            expect(function() {new NormalMemoryRegion(addr, size)}).to.throw();
+        let prop = fc.property(fc.gen(), (gen) => {
+            let regionStart = BigInt(0x10000);
+            let regionSize = BigInt(0x40000);
+            let region = new NormalMemoryRegion(regionStart, regionSize);
+            let readAccess = gen(ReadAccessArb, OutOfRangeAccessArb(regionStart, regionSize));
+            expect(() => region.read(readAccess[0], readAccess[1])).to.throw(MemoryRegionError);
         });
         fc.assert(prop);
     });
 
-    it("if overlap, cannot higher than", () => {
-        let prop = fc.property(
-            NormalMemoryRegionPairArb
-            .filter((pair) => pair[0].isOverlap(pair[1])),
-            (pair) => !pair[0].isHigherThan(pair[1])
-        );
-        fc.assert(prop);
-    });
-
-    it("if overlap, cannot lower than", () => {
-        let prop = fc.property(
-            NormalMemoryRegionPairArb
-            .filter((pair) => pair[0].isOverlap(pair[1])),
-            (pair) => !pair[0].isLowerThan(pair[1])
-        );
-        fc.assert(prop);
-    });
-
-    // TODO Can optimize for test run time to create aligned
-    // TODO region arbitrary
-    it("if other align lower, has to be higher than other", () => {
-        let prop = fc.property(
-            NormalMemoryRegionPairArb
-            .filter((pair) => pair[0].isAlignLower(pair[1])),
-            (pair) => pair[0].isHigherThan(pair[1])
-        );
-        fc.assert(prop);
-    });
-
-    it("if other align higher, has to be lower than other", () => {
-        let prop = fc.property(
-            NormalMemoryRegionPairArb
-            .filter((pair) => pair[0].isAlignHigher(pair[1])),
-            (pair) => pair[0].isLowerThan(pair[1])
-        );
+    it("write out of range should raise error", () => {
+        let prop = fc.property(fc.gen(), (gen) => {
+            let regionStart = BigInt(0x10000);
+            let regionSize = BigInt(0x40000);
+            let region = new NormalMemoryRegion(regionStart, regionSize);
+            let writeAccess = gen(WriteAccessArb, OutOfRangeAccessArb(regionStart, regionSize));
+            expect(() => region.write(writeAccess[0], writeAccess[1], writeAccess[2])).to.throw(MemoryRegionError);
+        });
         fc.assert(prop);
     });
 });
