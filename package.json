@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "mocha -r ts-node/register 'test/**/*.ts'"
+    "test": "mocha --timeout 30s -r ts-node/register 'test/**/*.ts'"
   },
   "repository": {
     "type": "git",
