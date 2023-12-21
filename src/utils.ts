@@ -12,6 +12,18 @@ export function hexify(input: bigint | number): string {
 }
 
 /**
+ * Extract a bit slice of a number
+ * @param value number
+ * @param start start bit pos, inclusive
+ * @param end end bit pos, inclusive
+ * @returns number slice
+ */
+export function getNumberBitAt(value: number, start: number, end: number, signed: boolean=false): number {
+    let length = end + 1 - start;
+    return (value >>> start) & (0xFFFFFFFF >>> (32 - length));
+}
+
+/**
  * Types
  */
 export type Pair<T1, T2> = [T1, T2];

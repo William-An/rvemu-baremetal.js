@@ -5,19 +5,21 @@ type RegisterBitWidth = 32 | 64;
 type DataViewReadFunction<T> = (byteOffset: number, littleEndian?: boolean | undefined) => T;
 type DataViewWriteFunction<T> = (byteOffset: number, value: T, littleEndian?: boolean | undefined) => void
 
-class RegisterFileError extends Error {
+export class RegisterFileError extends Error {
     constructor(message: string, rf: BaseRegisterFile) {
         super(message);
         this.name = `RegisterFileError on ${rf.toString()}`;
     }
 }
 
-class RegisterError extends Error {
+export class RegisterError extends Error {
     constructor(message: string, baseRF: BaseRegisterFile, index: number) {
         super(message);
         this.name = `RegisterError on register ${index} of ${baseRF.toString()}`;
     }
 }
+
+// TODO Convert the Error to specific error like RegisterIndexError to avoid writing those message
 
 /**
  * Base register file class
@@ -260,7 +262,7 @@ class BaseIntRegisterFile extends BaseRegisterFile {
     }
 }
 
-class IntRegFile extends BaseIntRegisterFile {
+export class IntRegFile extends BaseIntRegisterFile {
     readonly pcIndex: number;
     constructor(_width: RegisterBitWidth, _count: number, 
         _endianness: Endianness="little", _description="IntRegFile",
@@ -309,10 +311,16 @@ class IntRegFile extends BaseIntRegisterFile {
 /**
  * Control status register file
  */
-class CSIntRegFile extends BaseIntRegisterFile {
-    constructor(_width: RegisterBitWidth, _count: number=4096, 
+type CSRMapping = Map<number, number>;
+export class CSIntRegFile extends BaseIntRegisterFile {
+    // TODO Accepting a mapping from csr register encoding to
+    // TODO actually register index to indicate some cs registers not implemented
+    // TODO so can implement the various behaviors of CSRs, like read-only zero
+    readonly mapping: CSRMapping;
+    constructor(_width: RegisterBitWidth, _mapping: CSRMapping, 
         _endianness: Endianness="little", _description="CSIntRegFile") {
-        super(_width, _count, _endianness, _description);
+        super(_width, _mapping.size, _endianness, _description);
+        this.mapping = _mapping;
     }
     // TODO Exception handling
 }
