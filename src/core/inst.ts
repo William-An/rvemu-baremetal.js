@@ -107,16 +107,22 @@ export class RVInst {
         this.rs1 = getNumberBitAt(this.encoding, 15, 19);
         this.rs2 = getNumberBitAt(this.encoding, 20, 24);
         this.funct7 = getNumberBitAt(this.encoding, 25, 31);
-        this.imm_i = getNumberBitAt(this.encoding, 20, 31);
-        this.imm_s = getNumberBitAt(this.encoding, 7, 11) & (getNumberBitAt(this.encoding, 25, 31) << 5);
-        this.imm_b = (getNumberBitAt(this.encoding, 31, 31) << 12) &
+        // Convert immediate value with signed extension
+        // JS convert number to 32-bit integer for bitwise op
+        let signBit = getNumberBitAt(this.encoding, 31, 31);
+        let signField = signBit != 0 ? 0xFFFFFFFF : 0;
+        this.imm_i = (signField << 12) | getNumberBitAt(this.encoding, 20, 31);
+        this.imm_s = (signField << 12) | (getNumberBitAt(this.encoding, 7, 11) & (getNumberBitAt(this.encoding, 25, 31) << 5));
+        this.imm_b = (signField << 13) | 
+                    ((getNumberBitAt(this.encoding, 31, 31) << 12) &
                      (getNumberBitAt(this.encoding, 7, 7) << 11)  &
                      (getNumberBitAt(this.encoding, 25, 30) << 5)  &
-                     (getNumberBitAt(this.encoding, 11, 8) << 1);
+                     (getNumberBitAt(this.encoding, 11, 8) << 1));
         this.imm_u = getNumberBitAt(this.encoding, 12, 31) << 12;
-        this.imm_j = (getNumberBitAt(this.encoding, 31, 31) << 20) & 
+        this.imm_j = (signField << 21) | 
+                    ((getNumberBitAt(this.encoding, 31, 31) << 20) & 
                      (getNumberBitAt(this.encoding, 12, 19) << 12) & 
                      (getNumberBitAt(this.encoding, 20, 20) << 11) & 
-                     (getNumberBitAt(this.encoding, 21, 30) << 1);
+                     (getNumberBitAt(this.encoding, 21, 30) << 1));
     }
 }

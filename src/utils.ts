@@ -18,7 +18,7 @@ export function hexify(input: bigint | number): string {
  * @param end end bit pos, inclusive
  * @returns number slice
  */
-export function getNumberBitAt(value: number, start: number, end: number, signed: boolean=false): number {
+export function getNumberBitAt(value: number, start: number, end: number): number {
     let length = end + 1 - start;
     return (value >>> start) & (0xFFFFFFFF >>> (32 - length));
 }
