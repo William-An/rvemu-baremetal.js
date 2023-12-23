@@ -22,11 +22,32 @@ export class RVDecoderError extends RVEmulatorError {
 }
 
 export class RVExecError extends RVEmulatorError {
-    readonly execUnit: BaseRVExecUnit;
-    constructor(message: string, execUnit: BaseRVExecUnit) {
+    readonly execUnits: BaseRVExecUnit[];
+    readonly inst: RVInst;
+    constructor(message: string, inst: RVInst, execUnits: BaseRVExecUnit[]) {
         super(message);
         this.name = `RVExecError`;
+        this.execUnits = execUnits;
+        this.inst = inst;
+    }
+}
+
+export class RVExecDuplicatedUnitError extends RVExecError {
+    constructor(inst: RVInst, execUnits: BaseRVExecUnit[]) {
+        // TODO Add string format for rvinst and execuints
+        let msg = `Inst ${inst} handled by multiple execUnits in ${execUnits}!`;
+        super(msg, inst, execUnits);
+    }
+}
+
+export class RVExecUnitError extends RVEmulatorError {
+    readonly execUnit: BaseRVExecUnit;
+    readonly inst: RVInst;
+    constructor(message: string, inst: RVInst, execUnit: BaseRVExecUnit) {
+        super(message);
+        this.name = `RVExecUnitError`;
         this.execUnit = execUnit;
+        this.inst = inst;
     }
 }
 
