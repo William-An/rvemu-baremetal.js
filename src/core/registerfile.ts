@@ -262,6 +262,10 @@ class BaseIntRegisterFile extends BaseRegisterFile {
     }
 }
 
+/**
+ * Integer file for RISC-V, register at index 0 is hard-wired to 0
+ * for `write` and `writeValue` method
+ */
 export class IntRegFile extends BaseIntRegisterFile {
     readonly pcIndex: number;
     constructor(_width: RegisterBitWidth, _count: number, 
@@ -273,6 +277,25 @@ export class IntRegFile extends BaseIntRegisterFile {
             this.pcIndex = this.count - 1;
         else
             this.pcIndex = _pcIndex;
+
+        // Set x0 to zero at initialization
+        this.baseWriteValue<number>(DataView.prototype.setUint32, 0, 0);
+    }
+
+    /* Add protection to writing x0 */
+    override write(index: number, value: Uint8Array, signed: boolean=false): void {
+        if (index == 0)
+            return;
+        else
+            super.write(index, value, signed);
+    }
+
+    /* Add protection to writing x0 */
+    override writeValue(index: number, value: number | bigint, signed: boolean=false): void {
+        if (index == 0)
+            return;
+        else
+            super.writeValue(index, value, signed);
     }
 
     /**
@@ -295,7 +318,7 @@ export class IntRegFile extends BaseIntRegisterFile {
      * Set PC value
      * @param value new PC value
      */
-    setPCValue(value: bigint) {
+    setPCValue(value: number | bigint) {
         this.writeValue(this.pcIndex, value);
     }
 
