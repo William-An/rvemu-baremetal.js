@@ -1,7 +1,6 @@
+import { RVIllegalInstException } from "../exception";
 import { hexify, getNumberBitAt } from "../utils"
 import {cloneDeep} from 'lodash';
-import { RVError } from "./core";
-import { RVDecodeError } from "./decoder";
 
 // For now just 32-bit inst encoding
 export type Addr = number | bigint;
@@ -48,16 +47,6 @@ export enum BaseOpcode {
 }
 
 /**
- * Error classes
- */
-export class RVIllegalInstError extends RVDecodeError {
-    constructor(inst: RVInst) {
-        super(`Inst at ${hexify(inst.pc)} with encoding ${hexify(inst.encoding)}`);
-        this.name = `RVIllegalInstError`;
-    }
-}
-
-/**
  * Base RV instruction fields, should cover RV32G and RV64G
  * Where `G` stands for `IMAFDZicsr_Zifencei`
  * Assuming 32-bit encoding
@@ -100,7 +89,7 @@ export class RVInst {
         // Decoding
         let widthEncoding = getNumberBitAt(this.encoding, 1, 0);
         if (widthEncoding != 0b11)  // Check if 32-bit encoding inst
-            throw new RVIllegalInstError(this);
+            throw new RVIllegalInstException(this);
         this.baseOpcode = getNumberBitAt(this.encoding, 2, 6);
         this.rd = getNumberBitAt(this.encoding, 7, 11);
         this.funct3 = getNumberBitAt(this.encoding, 12, 14);

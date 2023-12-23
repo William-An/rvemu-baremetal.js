@@ -24,17 +24,17 @@ RISCV core, holding:
    1. Each ISA extension execution unit should inherit from `BaseRVInstExecUnit` with additional hardware resource connected like fp register file.
 4. Fetch unit
 5. LD/ST unit
-6. Exception handling
-   1. `throw + catch?`
-   2. Unify hardware exceptions under the same parent class `RVError`
-   3. `RVError`: For exception handling
-      1. `RVDecodeError`
-         1. `RVIllegalInstError`
+6. Error handling
+   1. `RVEmulatorError`: emulator error
+      1. `RVDecoderError`
       2. `RVExecError`
-         1. `RVDivisionByZeroError`
-         2. ...
-      3. `RVMemError`
-   4. Other programming exception/error should still inherit from `Error` class
+      3. `RVMemoryError`
+   2. `RVException`: inst exception
+      1. `RVIllegalInstException`
+      2. `RVMemMisalignedException`
+   3. `RVTrap`: inst trap
+      1. `RVECALLTrap`
+      2. `RVEBREAKTrap`
 
 ### Memory
 

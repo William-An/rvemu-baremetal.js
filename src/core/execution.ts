@@ -1,20 +1,10 @@
-import { RVIllegalInstError, RVInst, BaseOpcode } from "./inst";
+import { RVInst, BaseOpcode } from "./inst";
 import { Memory } from "../memory";
 import { IntRegFile } from "./registerfile";
-import { RVError } from "./core";
 import { getNumberBitAt } from "../utils";
-import { RVECALLTrap, RVEBREAKTrap } from "../exception";
+import { RVECALLTrap, RVEBREAKTrap, RVIllegalInstException } from "../exception";
 
-class RVExecError extends RVError {
-    execUnit: BaseRVExecUnit;
-    constructor(message: string, execUnit: BaseRVExecUnit) {
-        super(message);
-        this.name = `RVExecError`;
-        this.execUnit = execUnit;
-    }
-}
-
-abstract class BaseRVExecUnit {
+export abstract class BaseRVExecUnit {
     intRegFile: IntRegFile;
     memory: Memory;
 
@@ -104,7 +94,7 @@ export class RV32IExecUnit extends BaseRVExecUnit {
                     let shamt = getNumberBitAt(inst.imm_i, 0, 4);
                     let rest = getNumberBitAt(inst.imm_i, 5, 11);
                     if (rest != 0)
-                        throw new RVIllegalInstError(inst)
+                        throw new RVIllegalInstException(inst)
                     let dst_val = src_valu << shamt;
                     this.intRegFile.writeValue(inst.rd, dst_val, false);
                 } else if (inst.funct3 == RV32IExecUnit.SRLI_SRAI) { // SRLI/SRAI
@@ -116,7 +106,7 @@ export class RV32IExecUnit extends BaseRVExecUnit {
                     } else if (rest == 0b0100000) { // SRAI
                         dst_val = src_val >> shamt;
                     } else {
-                        throw new RVIllegalInstError(inst);
+                        throw new RVIllegalInstException(inst);
                     }
                     this.intRegFile.writeValue(inst.rd, dst_val, false);
                 } else {
@@ -150,35 +140,35 @@ export class RV32IExecUnit extends BaseRVExecUnit {
                         let dst_val = src1_val - src2_val;
                         this.intRegFile.writeValue(inst.rd, dst_val, true);
                     } else
-                        throw new RVIllegalInstError(inst);
+                        throw new RVIllegalInstException(inst);
                 } else if (inst.funct3 == RV32IExecUnit.SLT) {
                     if (inst.funct7 != 0b0000000)
-                        throw new RVIllegalInstError(inst);
+                        throw new RVIllegalInstException(inst);
                     let dst_val = src1_val < src2_val ? 1 : 0;
                     this.intRegFile.writeValue(inst.rd, dst_val, true);
                 } else if (inst.funct3 == RV32IExecUnit.SLTU) {
                     if (inst.funct7 != 0b0000000)
-                        throw new RVIllegalInstError(inst);
+                        throw new RVIllegalInstException(inst);
                     let dst_val = src1_valu < src2_valu ? 1 : 0;
                     this.intRegFile.writeValue(inst.rd, dst_val, true);
                 } else if (inst.funct3 == RV32IExecUnit.AND) {
                     if (inst.funct7 != 0b0000000)
-                        throw new RVIllegalInstError(inst);
+                        throw new RVIllegalInstException(inst);
                     let dst_val = src1_valu & src2_valu;
                     this.intRegFile.writeValue(inst.rd, dst_val, false);
                 } else if (inst.funct3 == RV32IExecUnit.OR) {
                     if (inst.funct7 != 0b0000000)
-                        throw new RVIllegalInstError(inst);
+                        throw new RVIllegalInstException(inst);
                     let dst_val = src1_valu | src2_valu;
                     this.intRegFile.writeValue(inst.rd, dst_val, false);
                 } else if (inst.funct3 == RV32IExecUnit.XOR) {
                     if (inst.funct7 != 0b0000000)
-                        throw new RVIllegalInstError(inst);
+                        throw new RVIllegalInstException(inst);
                     let dst_val = src1_valu ^ src2_valu;
                     this.intRegFile.writeValue(inst.rd, dst_val, false);
                 } else if (inst.funct3 == RV32IExecUnit.SLL) {
                     if (inst.funct7 != 0b0000000)
-                        throw new RVIllegalInstError(inst);
+                        throw new RVIllegalInstException(inst);
                     let shmat = getNumberBitAt(src2_valu, 0, 4);
                     let dst_val = src1_valu << shmat;
                     this.intRegFile.writeValue(inst.rd, dst_val, false);
@@ -191,11 +181,11 @@ export class RV32IExecUnit extends BaseRVExecUnit {
                         let dst_val = src1_val >> shmat;
                         this.intRegFile.writeValue(inst.rd, dst_val, true);
                     } else
-                        throw new RVIllegalInstError(inst);
+                        throw new RVIllegalInstException(inst);
                 } else {
                     // Impossible to have this case as funct3 only has 3 bits
                     // if we encounter this, it is likely a emulator programming error
-                    throw new RVIllegalInstError(inst);
+                    throw new RVIllegalInstException(inst);
                 }
                 break;
             }
@@ -234,7 +224,7 @@ export class RV32IExecUnit extends BaseRVExecUnit {
                 } else if (inst.funct3 == RV32IExecUnit.BGEU) {
                     next_pc = src1_valu >= src2_valu ? branch_pc : pc_add4;
                 } else {
-                    throw new RVIllegalInstError(inst);
+                    throw new RVIllegalInstException(inst);
                 }
                 break;
             }
@@ -243,7 +233,7 @@ export class RV32IExecUnit extends BaseRVExecUnit {
                 let log2Width = inst.funct3 & 0x3;
                 let signed = (inst.funct3 & 0x4) != 1;
                 if (log2Width > 2)
-                    throw new RVIllegalInstError(inst)
+                    throw new RVIllegalInstException(inst)
                 let data = this.memory.read(BigInt(addr), 1 << log2Width);
                 this.intRegFile.write(inst.rd, data, signed);
                 break;
@@ -253,7 +243,7 @@ export class RV32IExecUnit extends BaseRVExecUnit {
                 let log2Width = inst.funct3 & 0x3;
                 let signed = (inst.funct3 & 0x4) != 1;
                 if (log2Width > 2)
-                    throw new RVIllegalInstError(inst)
+                    throw new RVIllegalInstException(inst)
                 let data = this.intRegFile.read(inst.rs2);
                 this.memory.write(BigInt(addr), 1 << log2Width, data);
                 break;
@@ -264,9 +254,9 @@ export class RV32IExecUnit extends BaseRVExecUnit {
             }
             case BaseOpcode.SYSTEM: {
                 if (inst.imm_i == 0) { // ECALL
-                    throw new RVECALLTrap();
+                    throw new RVECALLTrap(inst);
                 } else if (inst.imm_i == 1) { // EBREAK
-                    throw new RVEBREAKTrap();
+                    throw new RVEBREAKTrap(inst);
                 } else {
                     return false;
                 }

@@ -1,13 +1,5 @@
 import { RVInst, InstBitWidth, Addr } from "./inst";
 import { Endianness } from "../utils";
-import { RVError } from "./core";
-
-export class RVDecodeError extends RVError {
-    constructor(message: string) {
-        super(message);
-        this.name = `RVDecodeError`;
-    }
-}
 
 export class RVDecoder {
     readonly bitWidth: InstBitWidth;

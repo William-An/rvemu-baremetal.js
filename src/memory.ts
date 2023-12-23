@@ -6,6 +6,7 @@ import { hexify, BigintPair } from "./utils"
 
 /**
  * Base memory exception class
+ * TODO Change to the inst exceptions in ./exception.ts?
  */
 class BaseMemoryError extends Error {
     constructor(message: string) {
